@@ -50,20 +50,24 @@ object covidSQL {
       .orderBy("date")
     covidSum.write.mode("overwrite").jdbc(url, "day_cases_deaths", prop)
 
-    //（2）每日的新增确诊人数。新增数=今日数-昨日数
+    //（2）每日的新增确诊人数
     val last_day_cases = Window.orderBy("date")
-    val covidAdd = covidDF.groupBy("date").agg(sum("cases").alias("cases"))
-      .withColumn("variation", col("cases") - lag("cases", 1).over(last_day_cases))
-      .na.fill(0.toDouble, Seq("variation"))
+    val covidAddCases = covidDF.groupBy("date").agg(sum("cases").alias("cases"))
+      .withColumn("cases_variation", col("cases") - lag("cases", 1).over(last_day_cases))
+      .na.fill(0.toDouble, Seq("cases_variation"))
       .orderBy("date")
-    covidAdd.write.mode("overwrite").jdbc(url, "day_add_cases", prop)
 
     //（3）统计美国每日的新增死亡人数
     val covidAddDeath = covidDF.groupBy("date").agg(sum("deaths").alias("deaths"))
-      .withColumn("variation", col("deaths") - lag("deaths", 1).over(last_day_cases))
-      .na.fill(0.toDouble, Seq("variation"))
+      .withColumn("deaths_variation", col("deaths") - lag("deaths", 1).over(last_day_cases))
+      .na.fill(0.toDouble, Seq("deaths_variation"))
       .orderBy("date")
-    covidAddDeath.write.mode("overwrite").jdbc(url, "day_add_deaths", prop)
+
+    //统计美国每日的新增确诊人数和新增死亡人数
+    val covidAdd = covidAddCases.join(covidAddDeath, "date")
+      .select("date", "cases", "cases_variation", "deaths", "deaths_variation")
+      .orderBy("date")
+    covidAdd.write.mode("overwrite").jdbc(url, "day_add_cases_deaths", prop)
 
     //（4）统计截止5.19日，美国每个州的累计确诊人数和死亡人数
     val covidState = covidDF.filter(to_date(to_timestamp(col("date"))) <= lit("2020-05-19"))
@@ -92,7 +96,8 @@ object covidSQL {
     top10LeastDeaths.write.mode("overwrite").jdbc(url, "top10_least_deaths", prop)
 
     //（9）统计截止5.19日，全美和各州的病死率
-    val usaRate = covidDF.agg(sum("cases").alias("cases"), sum("deaths").alias("deaths"))
+    val usaRate = covidDF.filter(to_date(to_timestamp(col("date"))) <= lit("2020-05-19"))
+      .agg(sum("cases").alias("cases"), sum("deaths").alias("deaths"))
       .withColumn("rate", round(col("deaths") / col("cases") * 100, 2))
       .withColumn("state", lit("USA"))
       .select("state", "cases", "deaths", "rate")
